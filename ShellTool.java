@@ -50,7 +50,14 @@ import java.util.concurrent.TimeUnit;
  * <pre>{@code
  *         ShellTool shellTool = ShellTool.builder().isRoot(true).create();
  *         shellTool = ShellTool.obtain();
- *         shellTool.cmd("ls").exec();
+ *         ShellTool.ShellResult shellResult = shellTool.cmd("ls").exec();
+ *         shellTool.cmd("""
+ *             if [[ 1 == 1 ]]; then
+ *                 echo hello;
+ *             elif [[ 1 == 2 ]]; then
+ *                 echo world;
+ *             fi
+ *             """).exec();
  *         shellTool.cmd("echo hello").async();
  *         shellTool.cmd("echo world").async(new ShellTool.IExecListener() {
  *             @Override
