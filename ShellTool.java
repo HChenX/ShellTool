@@ -51,6 +51,7 @@ import java.util.concurrent.TimeUnit;
  *         ShellTool shellTool = ShellTool.builder().isRoot(true).create();
  *         shellTool = ShellTool.obtain();
  *         ShellTool.ShellResult shellResult = shellTool.cmd("ls").exec();
+ *         boolean result = shellResult.isSuccess();
  *         shellTool.cmd("""
  *             if [[ 1 == 1 ]]; then
  *                 echo hello;
@@ -672,6 +673,10 @@ public class ShellTool {
         @Override
         public String toString() {
             return "ShellResult[command=" + command + ", outputs=" + Arrays.toString(outputs) + ", exitCode=" + exitCode + "]";
+        }
+
+        public boolean isSuccess() {
+            return "0".equals(exitCode);
         }
     }
 
