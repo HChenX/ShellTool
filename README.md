@@ -6,6 +6,7 @@
         ShellTool shellTool = ShellTool.builder().isRoot(true).create();
         shellTool = ShellTool.obtain();
         ShellTool.ShellResult shellResult = shellTool.cmd("ls").exec();
+        boolean result = shellResult.isSuccess();
         shellTool.cmd("""
             if [[ 1 == 1 ]]; then
                 echo hello;
