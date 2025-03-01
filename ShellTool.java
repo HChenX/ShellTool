@@ -687,7 +687,7 @@ public class ShellTool {
         default void error(String command, String[] errors, String exitCode) {
         }
 
-        default void notRoot(String result) {
+        default void notRoot(String exitCode) {
         }
 
         default void brokenPip(String command, String[] errors, String reason) {
