@@ -33,8 +33,8 @@
             }
 
             @Override
-            public void notRoot(String result) {
-                ShellTool.IExecListener.super.notRoot(result);
+            public void notRoot(String exitCode) {
+                ShellTool.IExecListener.super.notRoot(exitCode);
             }
 
             @Override
