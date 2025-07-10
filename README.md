@@ -5,8 +5,10 @@
 ```java
         ShellTool shellTool = ShellTool.builder().isRoot(true).create();
         shellTool = ShellTool.obtain();
-        ShellTool.ShellResult shellResult = shellTool.cmd("ls").exec();
-        boolean result = shellResult.isSuccess();
+        ShellResult shellResult = shellTool.cmd("ls").exec();
+        if (shellResult != null) {
+            boolean result = shellResult.isSuccess();
+        }
         shellTool.cmd("""
             if [[ 1 == 1 ]]; then
                 echo hello;
@@ -15,31 +17,31 @@
             fi
             """).exec();
         shellTool.cmd("echo hello").async();
-        shellTool.cmd("echo world").async(new ShellTool.IExecListener() {
+        shellTool.cmd("echo world").async(new IExecListener() {
             @Override
-            public void output(String command, String[] outputs, String exitCode) {
-                ShellTool.IExecListener.super.output(command, outputs, exitCode);
+            public void output(@NonNull String command, @NonNull String exitCode, @NonNull String[] outputs) {
+                IExecListener.super.output(command, exitCode, outputs);
             }
         });
-        shellTool.addExecListener(new ShellTool.IExecListener() {
+        shellTool.addExecListener(new IExecListener() {
             @Override
-            public void output(String command, String[] outputs, String exitCode) {
-                ShellTool.IExecListener.super.output(command, outputs, exitCode);
+            public void output(@NonNull String command, @NonNull String exitCode, @NonNull String[] outputs) {
+                IExecListener.super.output(command, exitCode, outputs);
             }
 
             @Override
-            public void error(String command, String[] errors, String exitCode) {
-                ShellTool.IExecListener.super.error(command, errors, exitCode);
+            public void error(@NonNull String command, @NonNull String exitCode, @NonNull String[] errors) {
+                IExecListener.super.error(command, exitCode, errors);
             }
 
             @Override
-            public void notRoot(String exitCode) {
-                ShellTool.IExecListener.super.notRoot(exitCode);
+            public void rootResult(boolean hasRoot, @NonNull String exitCode) {
+                IExecListener.super.rootResult(hasRoot, exitCode);
             }
 
             @Override
-            public void brokenPip(String command, String[] errors, String reason) {
-                ShellTool.IExecListener.super.brokenPip(command, errors, reason);
+            public void brokenPip(@NonNull String reason, @NonNull String[] errors) {
+                IExecListener.super.brokenPip(reason, errors);
             }
         });
         shellTool.close();
