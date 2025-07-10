@@ -1,5 +1,5 @@
 # ShellTool
-### 简易的 Shell 工具，可执行简易的 Shell 命令。
+### 简易的 Shell 工具，可执行简易的 Shell 命令。支持同步和异步命令的执行；支持 Root 模式和非 Root 模式。
 #### 使用方法:
 
 ```java
