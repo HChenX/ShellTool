@@ -16,7 +16,7 @@
 
  * Copyright (C) 2023-2025 HChenX
  */
-package com.hchen.hooktool.tool.additional;
+package com.hchen.shelltool;
 
 import android.util.Log;
 import android.util.Pair;
@@ -32,26 +32,30 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
- * 简易的 Shell 工具，可执行简易的 Shell 命令
+ * Shell 工具
  * <p>
  * 使用方法:
  * <p>
  * <pre>{@code
  *         ShellTool shellTool = ShellTool.builder().isRoot(true).create();
  *         shellTool = ShellTool.obtain();
- *         ShellTool.ShellResult shellResult = shellTool.cmd("ls").exec();
- *         boolean result = shellResult.isSuccess();
+ *         ShellResult shellResult = shellTool.cmd("ls").exec();
+ *         if (shellResult != null) {
+ *             boolean result = shellResult.isSuccess();
+ *         }
  *         shellTool.cmd("""
  *             if [[ 1 == 1 ]]; then
  *                 echo hello;
@@ -60,147 +64,154 @@ import java.util.concurrent.TimeUnit;
  *             fi
  *             """).exec();
  *         shellTool.cmd("echo hello").async();
- *         shellTool.cmd("echo world").async(new ShellTool.IExecListener() {
+ *         shellTool.cmd("echo world").async(new IExecListener() {
  *             @Override
- *             public void output(String command, String[] outputs, String exitCode) {
- *                 ShellTool.IExecListener.super.output(command, outputs, exitCode);
+ *             public void output(@NonNull String command, @NonNull String exitCode, @NonNull String[] outputs) {
+ *                 IExecListener.super.output(command, exitCode, outputs);
  *             }
  *         });
- *         shellTool.addExecListener(new ShellTool.IExecListener() {
+ *         shellTool.addExecListener(new IExecListener() {
  *             @Override
- *             public void output(String command, String[] outputs, String exitCode) {
- *                 ShellTool.IExecListener.super.output(command, outputs, exitCode);
+ *             public void output(@NonNull String command, @NonNull String exitCode, @NonNull String[] outputs) {
+ *                 IExecListener.super.output(command, exitCode, outputs);
  *             }
  *
  *             @Override
- *             public void error(String command, String[] errors, String exitCode) {
- *                 ShellTool.IExecListener.super.error(command, errors, exitCode);
+ *             public void error(@NonNull String command, @NonNull String exitCode, @NonNull String[] errors) {
+ *                 IExecListener.super.error(command, exitCode, errors);
  *             }
  *
  *             @Override
- *             public void notRoot(String result) {
- *                 ShellTool.IExecListener.super.notRoot(result);
+ *             public void rootResult(boolean hasRoot, @NonNull String exitCode) {
+ *                 IExecListener.super.rootResult(hasRoot, exitCode);
  *             }
  *
  *             @Override
- *             public void brokenPip(String command, String[] errors, String reason) {
- *                 ShellTool.IExecListener.super.brokenPip(command, errors, reason);
+ *             public void brokenPip(@NonNull String reason, @NonNull String[] errors) {
+ *                 IExecListener.super.brokenPip(reason, errors);
  *             }
  *         });
  *         shellTool.close();
  * }
- *
  * @author 焕晨HChen
  */
 public class ShellTool {
     private static final String TAG = "ShellTool";
     private static final String END_UUID = UUID.randomUUID().toString();
     private static final byte[] LINE_BREAK = "\n".getBytes(StandardCharsets.UTF_8);
-    private static final Builder mBuilder = new Builder();
-    private final ShellImpl mShellImpl = new ShellImpl(this);
-    private final List<IExecListener> mIExecListeners = new ArrayList<>();
-    private String[] mEntranceCmds = new String[]{"su", "sh"};
+    private static final Builder builder = new Builder();
+    private final ShellImpl shellImpl = new ShellImpl(this);
+    private final List<IExecListener> iExecListeners = new ArrayList<>();
+    private String[] shellCommands = new String[]{"su", "sh"};
     private boolean isRoot;
 
     private ShellTool() {
     }
 
     /**
-     * 构建 Shell。
+     * 构建 Shell
      */
+    @NonNull
     public static Builder builder() {
-        return mBuilder;
+        return builder;
     }
 
     /**
-     * 获取已经构建的 Shell，不存在会报错。
+     * 获取已经构建的 Shell，不存在会报错
      */
+    @NonNull
     public static ShellTool obtain() {
-        return mBuilder.obtain();
+        return builder.obtain();
     }
 
     /**
-     * 输入命令。
+     * 输入命令
      */
+    @NonNull
     public ShellTool cmd(@NonNull String cmd) {
-        return mShellImpl.cmd(cmd);
+        return shellImpl.cmd(cmd);
     }
 
     /**
-     * 同步执行命令，并获取返回值。
+     * 同步执行命令，并获取返回值
      */
+    @Nullable
     public ShellResult exec() {
-        return mShellImpl.exec();
+        return shellImpl.exec();
     }
 
     /**
-     * 异步执行命令。
+     * 异步执行命令
      */
     public void async() {
-        mShellImpl.async(null);
+        shellImpl.async(null);
     }
 
-    public void async(IExecListener iExecListener) {
-        mShellImpl.async(iExecListener);
+    public void async(@NonNull IExecListener iExecListener) {
+        shellImpl.async(iExecListener);
     }
 
     /**
-     * 添加回调。
+     * 添加回调，传入 null 则删除全部回调
      */
-    public void addExecListener(@Nullable IExecListener execListener) {
-        if (execListener == null) {
-            mIExecListeners.clear();
-            return;
-        }
-        mIExecListeners.add(execListener);
-    }
-
-    public void removeExecListener(@NonNull IExecListener execListener) {
-        mIExecListeners.remove(execListener);
+    public void addExecListener(@NonNull IExecListener iExecListener) {
+        iExecListeners.add(iExecListener);
     }
 
     /**
-     * Shell 是否处于活动状态。
+     * 移除指定回调
+     */
+    public void removeExecListener(@NonNull IExecListener iExecListener) {
+        iExecListeners.remove(iExecListener);
+    }
+
+    /**
+     * 清除全部回调
+     */
+    public void clearExecListener() {
+        iExecListeners.clear();
+    }
+
+    /**
+     * Shell 是否处于活动状态
      */
     public boolean isActive() {
-        return mShellImpl.isActive();
+        return shellImpl.isActive();
     }
 
     /**
-     * 关闭 Shell 流。
+     * 关闭 Shell 流
      */
     public void close() {
-        mShellImpl.close();
+        shellImpl.close();
     }
 
     private void create() {
-        mShellImpl.init();
+        shellImpl.init();
     }
 
     /**
-     * 检查是否支持 Root。
+     * 检查是否支持 Root
      */
     public static boolean isRootAvailable() {
         return isRootAvailable(true, null);
     }
 
     /**
-     * 检查是否支持 Root。
+     * 检查是否支持 Root
      */
-    public static boolean isRootAvailable(boolean sync, IExecListener execListener) {
+    public static boolean isRootAvailable(boolean sync, @Nullable IExecListener iExecListener) {
         Callable<Integer> callable = () -> {
             Process process = null;
             try {
                 process = Runtime.getRuntime().exec("su -c true");
                 int exitCode = process.waitFor();
-                if (exitCode != 0 && !sync) {
-                    if (execListener != null) {
-                        execListener.notRoot(String.valueOf(exitCode));
-                    }
+                if (iExecListener != null) {
+                    iExecListener.rootResult(exitCode == 0, String.valueOf(exitCode));
                 }
                 return exitCode;
             } catch (IOException | InterruptedException e) {
-                Log.e(TAG, "Error checking if root permission is supported:", e);
+                Log.e(TAG, "Error checking if root permission is supported!", e);
                 return -1;
             } finally {
                 if (process != null)
@@ -215,83 +226,81 @@ public class ShellTool {
                 return false;
             }
         } else {
-            ExecutorService service = Executors.newSingleThreadExecutor();
-            service.submit(callable);
-            service.shutdown();
+            Executors.newSingleThreadExecutor().submit(callable);
             return false;
         }
     }
 
     final class ShellImpl {
-        private final ShellTool mShellTool;
-        private boolean isActive = false;
-        private String mCommand = null;
-        private Process mProcess = null;
-        private StreamThread mStreamThread = null;
+        @NonNull
+        private final ShellTool shellTool;
+        private String command = null;
+        private Process process = null;
+        private StreamThread streamThread = null;
         private DataOutputStream os = null;
 
-        private ShellImpl(ShellTool shellTool) {
-            mShellTool = shellTool;
+        private ShellImpl(@NonNull ShellTool shellTool) {
+            this.shellTool = shellTool;
         }
 
         private synchronized void init() {
             try {
                 if (isActive()) return;
 
-                mCommand = null;
-                mProcess = Runtime.getRuntime().exec(isRoot ? mEntranceCmds[0] : mEntranceCmds[1]);
-                os = new DataOutputStream(mProcess.getOutputStream());
+                command = null;
+                process = Runtime.getRuntime().exec(isRoot ? shellCommands[0] : shellCommands[1]);
+                os = new DataOutputStream(process.getOutputStream());
 
-                mStreamThread = new StreamThread(this, mProcess.getInputStream(), mProcess.getErrorStream());
-                mStreamThread.clearAll();
-                mStreamThread.run();
-
-                isActive = true;
+                streamThread = new StreamThread(this, process.getInputStream(), process.getErrorStream());
+                streamThread.run();
             } catch (IOException e) {
-                isActive = false;
-                Log.e(TAG, "Error initializing Shell stream:", e);
+                Log.e(TAG, "Error initializing Shell stream!", e);
+            } finally {
+                notify();
             }
-            notify();
         }
 
+        @NonNull
         private synchronized ShellTool cmd(@NonNull String cmd) {
-            if (!isActive()) return mShellTool;
+            if (!isActive())
+                return shellTool;
 
-            mCommand = cmd;
-            return mShellTool;
+            command = cmd;
+            return shellTool;
         }
 
+        @Nullable
         private synchronized ShellResult exec() {
             if (!isActive()) return null;
-            if (mCommand == null) return null;
+            if (command == null) return null;
 
-            String[] commands = mCommand.split("\n");
+            String[] commands = command.split("\n");
             final byte[] END_CMD = String.format(
                     "__RET=$?; echo %1$s,$__RET,%2$s; echo %1$s,$__RET,%2$s 1>&2; unset __RET",
-                    END_UUID, mCommand.hashCode()
+                    END_UUID, command.hashCode()
                 )
                 .getBytes(StandardCharsets.UTF_8);
-            mStreamThread.mId2CommandSyncMap.put(String.valueOf(mCommand.hashCode()), mCommand);
+            streamThread.shellSyncMap.put(String.valueOf(command.hashCode()), command);
             write("{");
             writeAll(commands);
             write("}");
             write(END_CMD);
             sync();
 
-            return mStreamThread.getResult();
+            return streamThread.getResult();
         }
 
-        private synchronized void async(IExecListener iExecListener) {
+        private synchronized void async(@Nullable IExecListener iExecListener) {
             if (!isActive()) return;
-            if (mCommand == null) return;
+            if (command == null) return;
 
-            String[] commands = mCommand.split("\n");
+            String[] commands = command.split("\n");
             final byte[] END_CMD_ID = String.format(
                     "__RET=$?; echo %1$s,$__RET,%2$s,1; echo %1$s,$__RET,%2$s,1 1>&2; unset __RET",
-                    END_UUID, mCommand.hashCode()
+                    END_UUID, command.hashCode()
                 )
                 .getBytes(StandardCharsets.UTF_8);
-            mStreamThread.mId2CommandAsyncMap.put(String.valueOf(mCommand.hashCode()), new Pair<>(mCommand, iExecListener));
+            streamThread.shellAsyncMap.put(String.valueOf(command.hashCode()), new Pair<>(command, iExecListener));
 
             write("{");
             writeAll(commands);
@@ -308,143 +317,143 @@ public class ShellTool {
             }
         }
 
-        private void write(String cmd) {
-            write(cmd.getBytes(StandardCharsets.UTF_8));
+        private void write(@NonNull String command) {
+            write(command.getBytes(StandardCharsets.UTF_8));
         }
 
-        private void write(byte[] bytes) {
+        private void write(@NonNull byte[] bytes) {
             if (!isActive() || os == null) return;
             try {
                 os.write(bytes);
                 os.write(LINE_BREAK);
                 os.flush();
             } catch (IOException e) {
-                Log.e(TAG, "Error writing data to shell stream:", e);
+                Log.e(TAG, "Error writing data to shell stream!", e);
             }
         }
 
-        private void writeAll(String[] cmds) {
+        private void writeAll(@NonNull String[] commands) {
             if (!isActive() || os == null) return;
 
             try {
-                for (String cmd : cmds) {
+                for (String cmd : commands) {
                     final byte[] bytes = cmd.getBytes(StandardCharsets.UTF_8);
                     os.write(bytes);
                     os.write(LINE_BREAK);
                 }
                 os.flush();
             } catch (IOException e) {
-                Log.e(TAG, "Error writing data to shell stream:", e);
+                Log.e(TAG, "Error writing data to shell stream!", e);
             }
         }
 
         public synchronized void close() {
-            if (!isActive() && !mStreamThread.isAbnormalExit()) return;
+            if (!isActive() /* 已关闭 */ && !streamThread.isAbnormalExit() /* 不是异常退出 */)
+                return;
 
             try {
-                if (!mStreamThread.isAbnormalExit()) {
+                // 异常退出时 os 流已经死了，不需要再写入 exit 了
+                if (!streamThread.isAbnormalExit()) {
                     write("exit");
                 }
 
-                if (mProcess != null) {
-                    mProcess.waitFor(3, TimeUnit.SECONDS);
-                    mProcess.destroy();
+                if (process != null) {
+                    process.waitFor(3, TimeUnit.SECONDS);
+                    process.destroy();
                 }
-                if (os != null && !mStreamThread.isAbnormalExit()) {
+                if (os != null && !streamThread.isAbnormalExit()) {
                     try {
                         os.close();
                     } catch (IOException e) {
-                        Log.e(TAG, "Error closing OS:", e);
+                        Log.e(TAG, "Error closing OS!", e);
                     }
                 }
 
-                if (mStreamThread.mOutputService != null)
-                    mStreamThread.mOutputService.shutdown();
-                if (mStreamThread.mErrorService != null)
-                    mStreamThread.mErrorService.shutdown();
+                streamThread.close();
             } catch (InterruptedException e) {
-                Log.e(TAG, "Error closing shell stream:", e);
+                Log.e(TAG, "Error closing shell stream!", e);
             } finally {
-                mProcess = null;
+                streamThread = null;
+                command = null;
+                process = null;
                 os = null;
-                mStreamThread.clearAll();
             }
-            isActive = false;
         }
 
         private synchronized boolean isActive() {
-            if (mStreamThread == null || mProcess == null) return false;
-            return isActive && mStreamThread.isActive() && mProcess.isAlive();
+            if (streamThread == null || process == null) return false;
+            return streamThread.isActive() && process.isAlive();
         }
     }
 
     final class StreamThread {
         private final Object lock = new Object();
-        private final ExecutorService mOutputService = Executors.newSingleThreadExecutor();
-        private final ExecutorService mErrorService = Executors.newSingleThreadExecutor();
-        private final HashMap<String, Pair<String, IExecListener>> mId2CommandAsyncMap = new HashMap<>();
-        private final HashMap<String, String> mId2CommandSyncMap = new HashMap<>();
-        private final HashMap<String, ShellID> mCommand2IDMap = new HashMap<>();
-        private final List<String> mOutputList = new ArrayList<>();
-        private final List<String> mErrorList = new ArrayList<>();
-        private ShellResult mShellResult = null;
-        private Future<?> mOutputFuture = null;
-        private Future<?> mErrorFuture = null;
-        private String mExitCode = "unknown";
-        private final ShellImpl mShellImpl;
-        private final InputStream mInput;
-        private final InputStream mError;
+        private final int SHELL_ID_OUTPUT = 0;
+        private final int SHELL_ID_ERROR = 1;
+        private final ExecutorService outputService = Executors.newSingleThreadExecutor();
+        private final ExecutorService errorService = Executors.newSingleThreadExecutor();
+        private final ConcurrentHashMap<String, Pair<String, IExecListener>> shellAsyncMap = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, String> shellSyncMap = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, ShellData> shellDataMap = new ConcurrentHashMap<>();
+        private final CopyOnWriteArrayList<String> outputList = new CopyOnWriteArrayList<>();
+        private final CopyOnWriteArrayList<String> errorList = new CopyOnWriteArrayList<>();
+        private ShellResult shellResult = null;
+        private Future<?> outputFuture = null;
+        private Future<?> errorFuture = null;
+        @NonNull
+        private final ShellImpl shellImpl;
+        @NonNull
+        private final InputStream input;
+        @NonNull
+        private final InputStream error;
         private boolean isAbnormalExit = false;
-        private boolean isAsyncCommand = false;
-        private String mCommandID = "unknown";
 
-        private StreamThread(ShellImpl shellImpl, InputStream inputStream, InputStream errorStream) {
-            mShellImpl = shellImpl;
-            mInput = inputStream;
-            mError = errorStream;
+        private StreamThread(@NonNull ShellImpl shellImpl, @NonNull InputStream inputStream, @NonNull InputStream errorStream) {
+            this.shellImpl = shellImpl;
+            input = inputStream;
+            error = errorStream;
         }
 
         private void run() {
-            mOutputFuture = mOutputService.submit(
+            outputFuture = outputService.submit(
                 () -> {
-                    try (BufferedReader br = new BufferedReader(new InputStreamReader(mInput))) {
+                    try (BufferedReader br = new BufferedReader(new InputStreamReader(input))) {
                         String line;
                         while ((line = br.readLine()) != null) {
-                            if (filterID(line)) {
-                                shellID(0);
+                            if (filterContent(line, SHELL_ID_OUTPUT)) {
                                 continue;
                             }
 
-                            mOutputList.add(line);
+                            outputList.add(line);
                         }
                     } catch (Throwable e) {
-                        Log.e(TAG, "Error reading shell standard output stream:", e);
+                        Log.e(TAG, "Error reading shell standard output stream!", e);
                     }
                 }
             );
 
-            mErrorFuture = mErrorService.submit(
+            errorFuture = errorService.submit(
                 () -> {
-                    try (BufferedReader br = new BufferedReader(new InputStreamReader(mError))) {
+                    try (BufferedReader br = new BufferedReader(new InputStreamReader(error))) {
                         String line;
                         while ((line = br.readLine()) != null) {
-                            if (filterID(line)) {
-                                shellID(1);
+                            if (filterContent(line, SHELL_ID_ERROR)) {
                                 continue;
                             }
-                            mErrorList.add(line);
+
+                            errorList.add(line);
                         }
 
-                        if (!mErrorList.isEmpty()) {
+                        // Shell 管道异常破裂
+                        if (!errorList.isEmpty()) {
                             isAbnormalExit = true;
-                            mExitCode = "-1";
 
                             onBrokenPip();
-                            mShellImpl.close();
-                            mShellImpl.init();
+                            shellImpl.close();
+                            shellImpl.init();
                         }
                     } catch (Throwable e) {
-                        Log.e(TAG, "Error reading shell standard error stream:", e);
+                        Log.e(TAG, "Error reading shell standard error stream!", e);
                     }
                 }
             );
@@ -454,146 +463,85 @@ public class ShellTool {
             return isAbnormalExit;
         }
 
+        @Nullable
         private ShellResult getResult() {
-            return mShellResult;
+            return shellResult;
         }
 
         private boolean isActive() {
-            if (mOutputFuture == null || mErrorFuture == null) return false;
-            return !mOutputFuture.isDone() && !mErrorFuture.isDone() && !isAbnormalExit;
+            if (outputFuture == null || errorFuture == null) return false;
+            return !outputFuture.isDone() && !errorFuture.isDone() && !isAbnormalExit;
         }
 
-        private @Size(4) Object[] createFinalVar() {
-            return createFinalVar(mShellImpl.mCommand);
-        }
-
-        private @Size(4) Object[] createFinalVar(String cmd) {
-            final String command = cmd;
-            final String exitCode = mExitCode;
-            final ArrayList<String> outputList = new ArrayList<>(mOutputList);
-            final ArrayList<String> errorList = new ArrayList<>(mErrorList);
-            mOutputList.clear();
-            mErrorList.clear();
-            mExitCode = "unknown";
-
-            return new Object[]{command, exitCode, outputList, errorList};
-        }
-
-        private void createResult(Object[] finalVar) {
-            if ("unknown".equals(finalVar[1])) return;
-
-            if ("0".equals(finalVar[1]))
-                mShellResult = new ShellResult((String) finalVar[0], toArray((List<String>) finalVar[2]), (String) finalVar[1]);
-            else {
-                mShellResult = new ShellResult((String) finalVar[0], toArray((List<String>) finalVar[3]), (String) finalVar[1]);
-            }
-        }
-
-        private void callbackListener(Object[] finalVar) {
-            if (isAsyncCommand) return;
-            if ("unknown".equals(finalVar[1])) return;
-            if (mIExecListeners.isEmpty()) return;
-
-            for (IExecListener iExecListener : mIExecListeners) {
-                try {
-                    if ("0".equals(finalVar[1])) {
-                        iExecListener.output((String) finalVar[0], toArray((List<String>) finalVar[2]), (String) finalVar[1]);
-                    } else
-                        iExecListener.error((String) finalVar[0], toArray((List<String>) finalVar[3]), (String) finalVar[1]);
-                } catch (Throwable e) {
-                    Log.e(TAG, "Error during callback:", e);
-                }
-            }
-        }
-
-        private void callbackAsyncIfNeed(Object[] finalVar) {
-            if (!isAsyncCommand) return;
-            if ("unknown".equals(mCommandID)) return;
-            if (mId2CommandAsyncMap.get(mCommandID) == null) return;
-
-            String command = mId2CommandAsyncMap.get(mCommandID).first;
-            IExecListener iExecListener = mId2CommandAsyncMap.get(mCommandID).second;
-
-            if (iExecListener != null) {
-                if ("0".equals(finalVar[1])) {
-                    iExecListener.output(command, toArray((List<String>) finalVar[2]), (String) finalVar[1]);
-                } else
-                    iExecListener.error(command, toArray((List<String>) finalVar[3]), (String) finalVar[1]);
-            }
-            mId2CommandAsyncMap.remove(mCommandID);
-        }
-
-        private void notifyThread(Object[] finalVar) {
-            if (isAsyncCommand) return;
-            if ("unknown".equals(finalVar[1])) return;
-
-            synchronized (mShellImpl) {
-                try {
-                    mShellImpl.notify();
-                } catch (IllegalMonitorStateException ignore) {
-                }
-            }
-        }
-
-        private void shellID(int stream) {
-            if ("unknown".equals(mCommandID)) return;
-
-            if (mCommand2IDMap.get(mCommandID) == null) {
-                ShellID shellID = new ShellID();
-                if (stream == 0) shellID.mOutputID = true;
-                else if (stream == 1) shellID.mErrorID = true;
-                mCommand2IDMap.put(mCommandID, shellID);
-
-                synchronized (lock) {
-                    try {
-                        lock.wait();
-                    } catch (InterruptedException ignore) {
-                    }
-                }
-            } else {
-                ShellID shellID = mCommand2IDMap.get(mCommandID);
-                if ((shellID.mOutputID || stream == 0) && (shellID.mErrorID || stream == 1)) {
-                    mCommand2IDMap.remove(mCommandID);
-                    shellID.onIDDone(mId2CommandSyncMap.get(mCommandID));
-                    mId2CommandSyncMap.remove(mCommandID);
-                    mCommandID = "unknown";
-
-                    synchronized (lock) {
-                        lock.notifyAll();
-                    }
-                }
-            }
-        }
-
-        private synchronized boolean filterID(String content) {
-            if (content == null) return false;
-            if (!content.contains(",")) return false;
+        private boolean filterContent(@NonNull String content, int id) {
             if (!content.startsWith(END_UUID)) return false;
 
             String[] split = content.split(",");
-            if (!END_UUID.equals(split[0].trim())) return false;
+            String hashCode = split[2].trim();
 
-            mExitCode = split[1].trim();
-            if (split.length == 4) {
-                isAsyncCommand = true;
-                mCommandID = split[2].trim();
-            } else if (split.length == 3) {
-                isAsyncCommand = false;
-                mCommandID = split[2].trim();
-            } else return false;
+            synchronized (lock) {
+                if (shellDataMap.get(hashCode) == null) {
+                    ShellData shellData = new ShellData();
+                    shellData.exitCode = split[1].trim();
+                    shellData.isAsyncCommand = split.length == 4;
+                    shellData.command = shellData.isAsyncCommand ?
+                        Objects.requireNonNull(shellAsyncMap.get(hashCode)).first :
+                        shellSyncMap.get(hashCode);
+                    shellData.iExecListener = shellData.isAsyncCommand ?
+                        Objects.requireNonNull(shellAsyncMap.get(hashCode)).second :
+                        null;
+                    if (id == SHELL_ID_OUTPUT) {
+                        shellData.isOutputDone = true;
+                        shellData.outputs = toArray(outputList);
+                        outputList.clear();
+                    }
+                    if (id == SHELL_ID_ERROR) {
+                        shellData.isErrorDone = true;
+                        shellData.errors = toArray(errorList);
+                        errorList.clear();
+                    }
+                    shellDataMap.put(hashCode, shellData);
 
-            return true;
+                    try {
+                        lock.wait();
+                    } catch (InterruptedException e) {
+                    }
+                    return true;
+                } else {
+                    ShellData shellData = shellDataMap.get(hashCode);
+                    assert shellData != null;
+                    if ((shellData.isOutputDone || id == SHELL_ID_OUTPUT) && (shellData.isErrorDone || id == SHELL_ID_ERROR)) {
+                        if (shellData.outputs == null) shellData.outputs = toArray(outputList);
+                        if (shellData.errors == null) shellData.errors = toArray(errorList);
+                        shellData.onShellDone();
+                        shellDataMap.remove(hashCode);
+                        shellSyncMap.remove(hashCode);
+                        shellAsyncMap.remove(hashCode);
+                        outputList.clear();
+                        errorList.clear();
+
+                        lock.notifyAll();
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         private void onBrokenPip() {
-            if (mIExecListeners.isEmpty()) return;
+            if (iExecListeners.isEmpty()) return;
 
-            Object[] finalVar = createFinalVar();
-            for (IExecListener iExecListener : mIExecListeners) {
+            for (IExecListener iExecListener : iExecListeners) {
                 try {
-                    iExecListener.brokenPip((String) finalVar[0], toArray((List<String>) finalVar[3]), "Incorrect shell code causing pipeline rupture!");
+                    iExecListener.brokenPip(
+                        "Incorrect shell code causing pipeline rupture!!" +
+                            " Shell code list: sync: " + shellSyncMap.values()
+                            + ", async: " + shellAsyncMap.values().stream().map(p -> p.first).collect(Collectors.toCollection(ArrayList::new)),
+                        toArray(errorList)
+                    );
                 } catch (Throwable e) {
-                    Log.e(TAG, "Error during callback:", e);
+                    Log.e(TAG, "Error during callback!", e);
                 }
             }
         }
@@ -602,26 +550,77 @@ public class ShellTool {
             return list.toArray(new String[0]);
         }
 
-        private synchronized void clearAll() {
-            mOutputList.clear();
-            mErrorList.clear();
-            mShellResult = null;
-            isAsyncCommand = false;
+        private synchronized void close() {
+            if (outputService != null)
+                outputService.shutdownNow();
+            if (errorService != null)
+                errorService.shutdownNow();
+
+            shellAsyncMap.clear();
+            shellSyncMap.clear();
+            shellDataMap.clear();
+            outputList.clear();
+            errorList.clear();
+            shellResult = null;
             isAbnormalExit = false;
-            mExitCode = "unknown";
-            mCommandID = "unknown";
         }
 
-        private final class ShellID {
-            private boolean mOutputID = false;
-            private boolean mErrorID = false;
+        private final class ShellData {
+            private boolean isAsyncCommand = false;
+            private boolean isOutputDone = false;
+            private boolean isErrorDone = false;
+            private String command = null;
+            private String exitCode = "-1";
+            private String[] outputs = null;
+            private String[] errors = null;
+            private IExecListener iExecListener;
 
-            private void onIDDone(String cmd) {
-                Object[] finalVar = createFinalVar(cmd);
-                createResult(finalVar);
-                callbackListener(finalVar);
-                notifyThread(finalVar);
-                callbackAsyncIfNeed(finalVar);
+            private void onShellDone() {
+                createResult();
+                callbackSyncListener();
+                notifyThread();
+                callbackAsyncListenerIfNeed();
+            }
+
+            private void createResult() {
+                shellResult = new ShellResult(command, exitCode, outputs, errors);
+            }
+
+            private void callbackSyncListener() {
+                if (isAsyncCommand) return;
+                if (iExecListeners.isEmpty()) return;
+
+                for (IExecListener iExecListener : iExecListeners) {
+                    try {
+                        if ("0".equals(exitCode)) iExecListener.output(command, exitCode, outputs);
+                        else iExecListener.error(command, exitCode, errors);
+                    } catch (Throwable e) {
+                        Log.e(TAG, "Error during callback:", e);
+                    }
+                }
+            }
+
+            private void notifyThread() {
+                if (isAsyncCommand) return;
+
+                synchronized (shellImpl) {
+                    try {
+                        shellImpl.notify();
+                    } catch (IllegalMonitorStateException ignore) {
+                    }
+                }
+            }
+
+            private void callbackAsyncListenerIfNeed() {
+                if (!isAsyncCommand) return;
+                if (iExecListener != null) {
+                    try {
+                        if ("0".equals(exitCode)) iExecListener.output(command, exitCode, outputs);
+                        else iExecListener.error(command, exitCode, errors);
+                    } catch (Throwable e) {
+                        Log.e(TAG, "Error during callback:", e);
+                    }
+                }
             }
         }
     }
@@ -636,85 +635,30 @@ public class ShellTool {
             if (mShell.isActive())
                 return mShell;
             else {
-                throw new RuntimeException("[ShellTool][E]: " +
-                    "The shell tool has not been initialized, please use it after initialization!");
+                throw new RuntimeException("[ShellTool]: The shell tool has not been initialized, please use it after initialization!");
             }
         }
 
+        /**
+         * 是否使用 Root 模式
+         */
         public Builder isRoot(boolean isRoot) {
             mShell.isRoot = isRoot;
             return this;
         }
 
+        /**
+         * 设置启动时执行的命令。默认: {"su", "sh"}
+         */
         public Builder setEntranceCmds(@NonNull @Size(2) String[] cmds) {
             if (cmds.length != 2) return this;
-            mShell.mEntranceCmds = cmds;
-            return this;
-        }
-
-        public Builder addExecListener(@Nullable IExecListener execListener) {
-            mShell.addExecListener(execListener);
-            return this;
-        }
-
-        public Builder removeExecListener(IExecListener execListener) {
-            mShell.removeExecListener(execListener);
+            mShell.shellCommands = cmds;
             return this;
         }
 
         public ShellTool create() {
             mShell.create();
             return mShell;
-        }
-    }
-
-    public record ShellResult(String command, String[] outputs, String exitCode) {
-        @NonNull
-        @Override
-        public String toString() {
-            return "ShellResult[command=" + command + ", outputs=" + Arrays.toString(outputs) + ", exitCode=" + exitCode + "]";
-        }
-
-        public boolean isSuccess() {
-            return "0".equals(exitCode);
-        }
-    }
-
-    public interface IExecListener {
-        /**
-         * 标准输出。
-         *
-         * @param command  输入的命令
-         * @param outputs  执行后输出内容
-         * @param exitCode 退出码
-         */
-        default void output(String command, String[] outputs, String exitCode) {
-        }
-
-        /**
-         * 标准错误。
-         *
-         * @param command  输入的命令
-         * @param errors   报错内容
-         * @param exitCode 退出码
-         */
-        default void error(String command, String[] errors, String exitCode) {
-        }
-
-        /**
-         * 无 Root 时会执行的回调。
-         */
-        default void notRoot(String exitCode) {
-        }
-
-        /**
-         * 管道破裂时的回调，代码 Shell 流非正常终止。
-         *
-         * @param command 输入的命令
-         * @param errors  报错内容
-         * @param reason  崩溃原因
-         */
-        default void brokenPip(String command, String[] errors, String reason) {
         }
     }
 }
