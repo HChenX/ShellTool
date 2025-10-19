@@ -50,8 +50,7 @@ import java.util.stream.Collectors;
  * 使用方法:
  * <p>
  * <pre>{@code
- *         ShellTool shellTool = ShellTool.builder().isRoot(true).create();
- *         shellTool = ShellTool.obtain();
+ *         ShellTool shellTool = ShellTool.obtain(true);
  *         ShellResult shellResult = shellTool.cmd("ls").exec();
  *         if (shellResult != null) {
  *             boolean result = shellResult.isSuccess();
@@ -63,6 +62,11 @@ import java.util.stream.Collectors;
  *                 echo world;
  *             fi
  *             """).exec();
+ *         shellTool.enableSplicingMode()
+ *             .cmd("if [[ true == true ]]; then")
+ *             .cmd("  echo hello               ")
+ *             .cmd("fi                         ")
+ *             .exec();
  *         shellTool.cmd("echo hello").async();
  *         shellTool.cmd("echo world").async(new IExecListener() {
  *             @Override
@@ -91,7 +95,7 @@ import java.util.stream.Collectors;
  *                 IExecListener.super.brokenPip(reason, errors);
  *             }
  *         });
- *         shellTool.close();
+ *         ShellTool.close();
  * }
  * @author 焕晨HChen
  */
@@ -99,29 +103,111 @@ public class ShellTool {
     private static final String TAG = "ShellTool";
     private static final String END_UUID = UUID.randomUUID().toString();
     private static final byte[] LINE_BREAK = "\n".getBytes(StandardCharsets.UTF_8);
-    private static final Builder builder = new Builder();
-    private final ShellImpl shellImpl = new ShellImpl(this);
-    private final List<IExecListener> iExecListeners = new ArrayList<>();
-    private String[] shellCommands = new String[]{"su", "sh"};
-    private boolean isRoot;
+    private static final ShellTool shellTool = new ShellTool();
+    private static boolean isRoot = false;
+    private static String[] shellCommands = new String[]{"su", "sh"};
+    private static IExecListener iGlobalExecListeners;
+    private static ICommandListener iGlobalCommandListener;
+    private static ShellImpl shellImpl;
 
     private ShellTool() {
+        shellImpl = new ShellImpl(this);
     }
 
     /**
-     * 构建 Shell
-     */
-    @NonNull
-    public static Builder builder() {
-        return builder;
-    }
-
-    /**
-     * 获取已经构建的 Shell，不存在会报错
+     * 获取 Shell 实例
+     * <p>
+     * 请注意您只能创建一个全局 Shell 实例
      */
     @NonNull
     public static ShellTool obtain() {
-        return builder.obtain();
+        shellImpl.init();
+        return shellTool;
+    }
+
+    @NonNull
+    public static ShellTool obtain(boolean isRoot) {
+        setRoot(isRoot);
+        return obtain();
+    }
+
+    /**
+     * 是否使用 Root 模式运行
+     * <p>
+     * 请在 {@link #obtain()} 前调用
+     */
+    @NonNull
+    public static ShellTool setRoot(boolean isRoot) {
+        ShellTool.isRoot = isRoot;
+        return shellTool;
+    }
+
+    /**
+     * 设置自定义启动命令
+     * <p>
+     * 请在 {@link #obtain()} 前调用
+     */
+    @NonNull
+    public static ShellTool setShellCommands(@Size(2) String[] commands) {
+        shellCommands = commands;
+        return shellTool;
+    }
+
+    /**
+     * 添加全局执行回调，传入 null 则删除回调
+     * <p>
+     * 请在 {@link #obtain()} 前调用
+     */
+    @NonNull
+    public static ShellTool setExecListener(@Nullable IExecListener iExecListener) {
+        iGlobalExecListeners = iExecListener;
+        return shellTool;
+    }
+
+    /**
+     * 设置全局命令监听器
+     * <p>
+     * 您可以通过此监听器，判断命令是否可以被合法的输入并执行
+     * <p>
+     * 请在 {@link #obtain()} 前调用
+     */
+    @NonNull
+    public static ShellTool setCommandListener(@Nullable ICommandListener listener) {
+        iGlobalCommandListener = listener;
+        return shellTool;
+    }
+
+    /**
+     * Shell 是否处于活动状态
+     */
+    public static boolean isActive() {
+        return shellImpl.isActive();
+    }
+
+    /**
+     * 关闭 Shell 流
+     */
+    public static void close() {
+        shellImpl.close();
+    }
+
+    /**
+     * 是否使用命令拼接模式
+     * <p>
+     * 请注意：请务必在 {@link ShellTool#cmd(String)} 前调用！
+     * <p>
+     * 使用此模式后，在调用 {@link ShellTool#exec()} 或 {@link ShellTool#async()} 之前都会保持在拼接模式
+     * <pre>{@code
+     *     ShellTool.obtain().enableSplicingMode()
+     *          .cmd("if [[ hello == world ]]; then")
+     *          .cmd("  echo \"hello world\"       ")
+     *          .cmd("fi                           ")
+     *          .exec();
+     * }
+     */
+    @NonNull
+    public ShellTool enableSplicingMode() {
+        return shellImpl.enableSplicingMode();
     }
 
     /**
@@ -151,50 +237,20 @@ public class ShellTool {
         shellImpl.async(iExecListener);
     }
 
-    /**
-     * 添加回调，传入 null 则删除全部回调
-     */
-    public void addExecListener(@NonNull IExecListener iExecListener) {
-        iExecListeners.add(iExecListener);
-    }
-
-    /**
-     * 移除指定回调
-     */
-    public void removeExecListener(@NonNull IExecListener iExecListener) {
-        iExecListeners.remove(iExecListener);
-    }
-
-    /**
-     * 清除全部回调
-     */
-    public void clearExecListener() {
-        iExecListeners.clear();
-    }
-
-    /**
-     * Shell 是否处于活动状态
-     */
-    public boolean isActive() {
-        return shellImpl.isActive();
-    }
-
-    /**
-     * 关闭 Shell 流
-     */
-    public void close() {
-        shellImpl.close();
-    }
-
-    private void create() {
-        shellImpl.init();
-    }
+    // --------------------------------------- Root Check -------------------------------------------
 
     /**
      * 检查是否支持 Root
      */
     public static boolean isRootAvailable() {
         return isRootAvailable(true, null);
+    }
+
+    /**
+     * 检查是否支持 Root
+     */
+    public static boolean isRootAvailable(@NonNull IExecListener iExecListener) {
+        return isRootAvailable(true, iExecListener);
     }
 
     /**
@@ -211,7 +267,7 @@ public class ShellTool {
                 }
                 return exitCode;
             } catch (IOException | InterruptedException e) {
-                Log.e(TAG, "Error checking if root permission is supported!", e);
+                Log.e(TAG, "Error checking if root permission is supported!!", e);
                 return -1;
             } finally {
                 if (process != null)
@@ -230,10 +286,13 @@ public class ShellTool {
             return false;
         }
     }
+    // ----------------------------------------------------------------------------------------------
 
     final class ShellImpl {
         @NonNull
         private final ShellTool shellTool;
+        private boolean isSplicingMode = false;
+        private final ArrayList<String> waitSplicingCommandList = new ArrayList<>();
         private String command = null;
         private Process process = null;
         private StreamThread streamThread = null;
@@ -254,24 +313,35 @@ public class ShellTool {
                 streamThread = new StreamThread(this, process.getInputStream(), process.getErrorStream());
                 streamThread.run();
             } catch (IOException e) {
-                Log.e(TAG, "Error initializing Shell stream!", e);
+                throw new RuntimeException("Error initializing shell stream!!");
             } finally {
                 notify();
             }
         }
 
         @NonNull
+        private synchronized ShellTool enableSplicingMode() {
+            this.isSplicingMode = true;
+            return shellTool;
+        }
+
+        @NonNull
         private synchronized ShellTool cmd(@NonNull String cmd) {
             if (!isActive())
-                return shellTool;
+                throw new RuntimeException("Shell stream is dead!");
 
-            command = cmd;
+            if (isSplicingMode) waitSplicingCommandList.add(cmd);
+            else command = cmd;
             return shellTool;
         }
 
         @Nullable
         private synchronized ShellResult exec() {
-            if (!isActive()) return null;
+            if (!isActive())
+                throw new RuntimeException("Shell stream is dead!");
+
+            splicingCommandIfNeed();
+            callbackCommandListener();
             if (command == null) return null;
 
             String[] commands = command.split("\n");
@@ -285,13 +355,22 @@ public class ShellTool {
             writeAll(commands);
             write("}");
             write(END_CMD);
-            sync();
+            command = null;
+
+            try {
+                wait();
+            } catch (InterruptedException ignore) {
+            }
 
             return streamThread.getResult();
         }
 
         private synchronized void async(@Nullable IExecListener iExecListener) {
-            if (!isActive()) return;
+            if (!isActive())
+                throw new RuntimeException("Shell stream is dead!");
+
+            splicingCommandIfNeed();
+            callbackCommandListener();
             if (command == null) return;
 
             String[] commands = command.split("\n");
@@ -306,15 +385,7 @@ public class ShellTool {
             writeAll(commands);
             write("}");
             write(END_CMD_ID);
-        }
-
-        private synchronized void sync() {
-            if (!isActive()) return;
-
-            try {
-                wait();
-            } catch (InterruptedException ignore) {
-            }
+            command = null;
         }
 
         private void write(@NonNull String command) {
@@ -322,19 +393,16 @@ public class ShellTool {
         }
 
         private void write(@NonNull byte[] bytes) {
-            if (!isActive() || os == null) return;
             try {
                 os.write(bytes);
                 os.write(LINE_BREAK);
                 os.flush();
             } catch (IOException e) {
-                Log.e(TAG, "Error writing data to shell stream!", e);
+                Log.e(TAG, "Error writing data to shell stream!!", e);
             }
         }
 
         private void writeAll(@NonNull String[] commands) {
-            if (!isActive() || os == null) return;
-
             try {
                 for (String cmd : commands) {
                     final byte[] bytes = cmd.getBytes(StandardCharsets.UTF_8);
@@ -343,35 +411,35 @@ public class ShellTool {
                 }
                 os.flush();
             } catch (IOException e) {
-                Log.e(TAG, "Error writing data to shell stream!", e);
+                Log.e(TAG, "Error writing data to shell stream!!", e);
             }
         }
 
         public synchronized void close() {
-            if (!isActive() /* 已关闭 */ && !streamThread.isAbnormalExit() /* 不是异常退出 */)
-                return;
-
             try {
-                // 异常退出时 os 流已经死了，不需要再写入 exit 了
-                if (!streamThread.isAbnormalExit()) {
-                    write("exit");
-                }
-
-                if (process != null) {
-                    process.waitFor(3, TimeUnit.SECONDS);
-                    process.destroy();
-                }
-                if (os != null && !streamThread.isAbnormalExit()) {
-                    try {
-                        os.close();
-                    } catch (IOException e) {
-                        Log.e(TAG, "Error closing OS!", e);
+                if (isActive() || (streamThread != null && streamThread.isAbnormalExit())) {
+                    // 异常退出时 os 流已经死了，不需要再写入 exit 了
+                    if (!streamThread.isAbnormalExit()) {
+                        write("exit");
                     }
-                }
 
-                streamThread.close();
+                    if (process != null) {
+                        process.waitFor(3, TimeUnit.SECONDS);
+                        process.destroy();
+                    }
+
+                    if (os != null && !streamThread.isAbnormalExit()) {
+                        try {
+                            os.close();
+                        } catch (IOException e) {
+                            Log.e(TAG, "Error closing OS!!", e);
+                        }
+                    }
+
+                    streamThread.close();
+                }
             } catch (InterruptedException e) {
-                Log.e(TAG, "Error closing shell stream!", e);
+                Log.e(TAG, "Error closing shell stream!!", e);
             } finally {
                 streamThread = null;
                 command = null;
@@ -383,6 +451,25 @@ public class ShellTool {
         private synchronized boolean isActive() {
             if (streamThread == null || process == null) return false;
             return streamThread.isActive() && process.isAlive();
+        }
+
+        private void splicingCommandIfNeed() {
+            if (!isSplicingMode) return;
+            StringBuilder stringBuilder = new StringBuilder();
+            for (int i = 0; i < waitSplicingCommandList.size(); i++) {
+                if (i == waitSplicingCommandList.size() - 1)
+                    stringBuilder.append(waitSplicingCommandList.get(i));
+                else stringBuilder.append(waitSplicingCommandList.get(i)).append("\n");
+            }
+            isSplicingMode = false;
+            command = stringBuilder.toString();
+            waitSplicingCommandList.clear();
+        }
+
+        private void callbackCommandListener() {
+            if (command == null) return;
+            if (iGlobalCommandListener == null) return;
+            if (!iGlobalCommandListener.onCommand(command)) command = null;
         }
     }
 
@@ -427,7 +514,7 @@ public class ShellTool {
                             outputList.add(line);
                         }
                     } catch (Throwable e) {
-                        Log.e(TAG, "Error reading shell standard output stream!", e);
+                        Log.e(TAG, "Error reading shell standard output stream!!", e);
                     }
                 }
             );
@@ -453,7 +540,7 @@ public class ShellTool {
                             shellImpl.init();
                         }
                     } catch (Throwable e) {
-                        Log.e(TAG, "Error reading shell standard error stream!", e);
+                        Log.e(TAG, "Error reading shell standard error stream!!", e);
                     }
                 }
             );
@@ -474,12 +561,11 @@ public class ShellTool {
         }
 
         private boolean filterContent(@NonNull String content, int id) {
-            if (!content.startsWith(END_UUID)) return false;
-
-            String[] split = content.split(",");
-            String hashCode = split[2].trim();
-
             synchronized (lock) {
+                if (!content.startsWith(END_UUID)) return false;
+
+                String[] split = content.split(",");
+                String hashCode = split[2].trim();
                 if (shellDataMap.get(hashCode) == null) {
                     ShellData shellData = new ShellData();
                     shellData.exitCode = split[1].trim();
@@ -504,7 +590,7 @@ public class ShellTool {
 
                     try {
                         lock.wait();
-                    } catch (InterruptedException e) {
+                    } catch (InterruptedException ignore) {
                     }
                     return true;
                 } else {
@@ -520,7 +606,7 @@ public class ShellTool {
                         outputList.clear();
                         errorList.clear();
 
-                        lock.notifyAll();
+                        lock.notify();
                         return true;
                     }
                 }
@@ -530,19 +616,17 @@ public class ShellTool {
         }
 
         private void onBrokenPip() {
-            if (iExecListeners.isEmpty()) return;
+            if (iGlobalExecListeners == null) return;
 
-            for (IExecListener iExecListener : iExecListeners) {
-                try {
-                    iExecListener.brokenPip(
-                        "Incorrect shell code causing pipeline rupture!!" +
-                            " Shell code list: sync: " + shellSyncMap.values()
-                            + ", async: " + shellAsyncMap.values().stream().map(p -> p.first).collect(Collectors.toCollection(ArrayList::new)),
-                        toArray(errorList)
-                    );
-                } catch (Throwable e) {
-                    Log.e(TAG, "Error during callback!", e);
-                }
+            try {
+                iGlobalExecListeners.brokenPip(
+                    "Incorrect shell code causing pipeline rupture!!" +
+                        " Shell code list: sync: " + shellSyncMap.values()
+                        + ", async: " + shellAsyncMap.values().stream().map(p -> p.first).collect(Collectors.toCollection(ArrayList::new)),
+                    toArray(errorList)
+                );
+            } catch (Throwable e) {
+                Log.e(TAG, "Error during callback!!", e);
             }
         }
 
@@ -550,7 +634,7 @@ public class ShellTool {
             return list.toArray(new String[0]);
         }
 
-        private synchronized void close() {
+        private void close() {
             if (outputService != null)
                 outputService.shutdownNow();
             if (errorService != null)
@@ -578,8 +662,8 @@ public class ShellTool {
             private void onShellDone() {
                 createResult();
                 callbackSyncListener();
-                notifyThread();
                 callbackAsyncListenerIfNeed();
+                notifyImpl();
             }
 
             private void createResult() {
@@ -588,19 +672,18 @@ public class ShellTool {
 
             private void callbackSyncListener() {
                 if (isAsyncCommand) return;
-                if (iExecListeners.isEmpty()) return;
+                if (iGlobalExecListeners == null) return;
 
-                for (IExecListener iExecListener : iExecListeners) {
-                    try {
-                        if ("0".equals(exitCode)) iExecListener.output(command, exitCode, outputs);
-                        else iExecListener.error(command, exitCode, errors);
-                    } catch (Throwable e) {
-                        Log.e(TAG, "Error during callback:", e);
-                    }
+                try {
+                    if ("0".equals(exitCode))
+                        iGlobalExecListeners.output(command, exitCode, outputs);
+                    else iGlobalExecListeners.error(command, exitCode, errors);
+                } catch (Throwable e) {
+                    Log.e(TAG, "Error during callback!!", e);
                 }
             }
 
-            private void notifyThread() {
+            private void notifyImpl() {
                 if (isAsyncCommand) return;
 
                 synchronized (shellImpl) {
@@ -618,47 +701,10 @@ public class ShellTool {
                         if ("0".equals(exitCode)) iExecListener.output(command, exitCode, outputs);
                         else iExecListener.error(command, exitCode, errors);
                     } catch (Throwable e) {
-                        Log.e(TAG, "Error during callback:", e);
+                        Log.e(TAG, "Error during callback!!", e);
                     }
                 }
             }
-        }
-    }
-
-    public static final class Builder {
-        private static final ShellTool mShell = new ShellTool();
-
-        private Builder() {
-        }
-
-        private ShellTool obtain() {
-            if (mShell.isActive())
-                return mShell;
-            else {
-                throw new RuntimeException("[ShellTool]: The shell tool has not been initialized, please use it after initialization!");
-            }
-        }
-
-        /**
-         * 是否使用 Root 模式
-         */
-        public Builder isRoot(boolean isRoot) {
-            mShell.isRoot = isRoot;
-            return this;
-        }
-
-        /**
-         * 设置启动时执行的命令。默认: {"su", "sh"}
-         */
-        public Builder setEntranceCmds(@NonNull @Size(2) String[] cmds) {
-            if (cmds.length != 2) return this;
-            mShell.shellCommands = cmds;
-            return this;
-        }
-
-        public ShellTool create() {
-            mShell.create();
-            return mShell;
         }
     }
 }
